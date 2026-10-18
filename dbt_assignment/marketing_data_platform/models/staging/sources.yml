@@ -1,0 +1,306 @@
+version: 2
+
+sources:
+  - name: platform
+    description: >
+      Raw marketing data from the bronze layer, covering two ad platforms:
+      Facebook (tables prefixed fb_) and Snapchat (tables prefixed snap_).
+    database: "{{ env_var('DEV_CATALOG') }}"
+    schema: "{{ env_var('DEV_SCHEMA') }}"
+    tables:
+      # ---------------------------- FACEBOOK ----------------------------
+      - name: fb_accounts
+        identifier: fb_acccounts   # actual warehouse name (3 c's); delete this line if the table is really fb_accounts
+        description: >
+          Facebook ad accounts. One row per account (16 at profiling time).
+          Both account_id and account_name are unique. Amounts across the
+          platform are in USD or EUR, so currency must be considered before
+          summing spend.
+        columns:
+          - name: account_id
+            data_type: bigint
+            description: "Primary key. Unique identifier of the Facebook ad account."
+            data_tests:
+              - unique
+              - not_null
+          - name: account_name
+            data_type: string
+            description: "Display name of the ad account. Unique."
+            data_tests:
+              - unique
+          - name: ad_currency_code
+            data_type: string
+            description: "Currency the account is billed in. Only USD or EUR occur."
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: ['USD', 'EUR']
+          - name: account_created_at
+            data_type: timestamp
+            description: "When the account was created."
+          - name: account_updated_at
+            data_type: timestamp
+            description: "When the account record was last updated."
+
+      - name: fb_adgroups
+        description: >
+          Facebook ad groups. One row per ad group (13,433 at profiling time).
+          Both ad_group_id and ad_group_name are unique.
+        columns:
+          - name: ad_group_id
+            data_type: bigint
+            description: "Primary key. Unique identifier of the ad group."
+            data_tests:
+              - unique
+              - not_null
+          - name: ad_group_name
+            data_type: string
+            description: "Name of the ad group. Unique."
+            data_tests:
+              - unique
+          - name: ad_group_updated_at
+            data_type: timestamp
+            description: "When the ad group was last updated."
+
+      - name: fb_campaigns
+        description: >
+          Facebook marketing campaigns. One row per campaign (4,162 at
+          profiling time). Both campaign_id and campaign_name are unique.
+        columns:
+          - name: campaign_id
+            data_type: bigint
+            description: "Primary key. Unique identifier of the campaign."
+            data_tests:
+              - unique
+              - not_null
+          - name: campaign_name
+            data_type: string
+            description: "Name of the campaign. Unique."
+            data_tests:
+              - unique
+          - name: campaign_updated_at
+            data_type: timestamp
+            description: "When the campaign was last updated."
+
+      - name: fb_ads
+        description: >
+          Facebook ads. One row per ad; both ad_id and ad_name are unique.
+          Each ad links to a campaign, an ad group and an account, and has
+          a status of ACTIVE, PAUSE, ARCHIVED or DELETED. Includes deleted
+          and archived ads, so filter on ad_status for live ads.
+        columns:
+          - name: ad_id
+            data_type: bigint
+            description: "Primary key. Unique identifier of the ad."
+            data_tests:
+              - unique
+              - not_null
+          - name: campaign_id
+            data_type: bigint
+            description: "Campaign the ad belongs to. Joins to fb_campaigns."
+            data_tests:
+              - relationships:
+                  arguments:
+                    to: "source('platform', 'fb_campaigns')"
+                    field: campaign_id
+                  config:
+                    severity: warn
+          - name: ad_group_id
+            data_type: bigint
+            description: "Ad group the ad belongs to. Joins to fb_adgroups."
+            data_tests:
+              - relationships:
+                  arguments:
+                    to: "source('platform', 'fb_adgroups')"
+                    field: ad_group_id
+                  config:
+                    severity: warn
+          - name: account_id
+            data_type: bigint
+            description: "Account that owns the ad. Joins to fb_accounts."
+            data_tests:
+              - relationships:
+                  arguments:
+                    to: "source('platform', 'fb_accounts')"
+                    field: account_id
+                  config:
+                    severity: warn
+          - name: ad_name
+            data_type: string
+            description: "Name of the ad. Unique."
+            data_tests:
+              - unique
+          - name: ad_status
+            data_type: string
+            description: "Current status of the ad: ACTIVE, PAUSE, ARCHIVED or DELETED."
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: ['ACTIVE', 'PAUSED', 'ARCHIVED', 'DELETED']
+          - name: ad_updated_at
+            data_type: timestamp
+            description: "When the ad was last updated."
+
+      - name: fb_ads_stats
+        description: >
+          Daily Facebook ad performance: spend, impressions and clicks per ad
+          per date. Coverage is partial: only about 2,820 of the 98,926 ads
+          appear here, and only 3 of the 16 accounts. Do not treat a missing
+          ad as an ad with zero spend; it may simply have no reported data.
+        columns:
+          - name: ad_id
+            data_type: bigint
+            description: "Ad the statistics belong to. Joins to fb_ads. Repeats across dates."
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: "source('platform', 'fb_ads')"
+                    field: ad_id
+                  config:
+                    severity: warn
+          - name: account_id
+            data_type: bigint
+            description: "Account the statistics belong to. Only 3 of 16 accounts appear."
+            data_tests:
+              - relationships:
+                  arguments:
+                    to: "source('platform', 'fb_accounts')"
+                    field: account_id
+                  config:
+                    severity: warn
+          - name: ad_spend
+            data_type: double
+            description: "Amount spent on the ad on that date, in the account currency (USD or EUR)."
+          - name: ad_impressions
+            data_type: string
+            description: "Number of impressions. Stored as string in bronze; cast to a number in staging."
+          - name: ad_clicks
+            data_type: string
+            description: "Number of clicks. Stored as string in bronze; cast to a number in staging."
+          - name: ad_date
+            data_type: date
+            description: "Date the statistics apply to."
+            data_tests:
+              - not_null
+
+      # ---------------------------- SNAPCHAT ----------------------------
+      - name: snap_campaigns
+        description: >
+          Snapchat marketing campaigns. One row per campaign (109 at profiling
+          time), spread across only two accounts. Both campaign_id and
+          campaign_name are unique. There is no update timestamp.
+        columns:
+          - name: campaign_id
+            data_type: string
+            description: "Primary key. Unique identifier of the campaign."
+            data_tests:
+              - unique
+              - not_null
+          - name: account_id
+            data_type: string
+            description: "Account that owns the campaign. Only two distinct accounts exist."
+          - name: campaign_name
+            data_type: string
+            description: "Name of the campaign. Unique."
+            data_tests:
+              - unique
+
+      - name: snap_adgroups
+        description: >
+          Snapchat ad groups, with the campaign each belongs to. Contains 264
+          distinct ad groups, fewer than the 328 ad group IDs referenced by
+          snap_ads, so some ads point to ad groups that are missing here.
+        columns:
+          - name: _surrogate_key
+            data_type: string
+            description: "Generated key that identifies a row in this table."
+            data_tests:
+              - unique
+              - not_null
+          - name: ad_group_id
+            data_type: string
+            description: "Identifier of the ad group."
+            data_tests:
+              - not_null
+          - name: campaign_id
+            data_type: string
+            description: "Campaign the ad group belongs to. Joins to snap_campaigns."
+            data_tests:
+              - relationships:
+                  arguments:
+                    to: "source('platform', 'snap_campaigns')"
+                    field: campaign_id
+                  config:
+                    severity: warn
+          - name: ad_group_name
+            data_type: string
+            description: "Name of the ad group."
+          - name: ad_group_updated_at
+            data_type: timestamp
+            description: "When the ad group was last updated."
+
+      - name: snap_ads
+        description: >
+          Snapchat ads. One row per ad (2,513 at profiling time); both ad_id
+          and ad_name are unique. The ads reference 328 distinct ad groups,
+          but snap_adgroups holds only 264, so about 64 ad groups have no
+          matching record.
+        columns:
+          - name: ad_id
+            data_type: string
+            description: "Primary key. Unique identifier of the ad."
+            data_tests:
+              - unique
+              - not_null
+          - name: ad_group_id
+            data_type: string
+            description: "Ad group the ad belongs to. Joins to snap_adgroups, but not every value has a match."
+            data_tests:
+              - relationships:
+                  arguments:
+                    to: "source('platform', 'snap_adgroups')"
+                    field: ad_group_id
+                  config:
+                    severity: warn
+          - name: ad_name
+            data_type: string
+            description: "Name of the ad. Unique."
+            data_tests:
+              - unique
+          - name: ad_detail_updated_at
+            data_type: timestamp
+            description: "When the ad details were last updated."
+
+      - name: snap_ads_stats
+        description: >
+          Snapchat ad performance by date, country and currency: spend,
+          impressions and clicks. Use it to analyse performance and audience
+          engagement.
+        columns:
+          - name: ad_detail_id
+            data_type: string
+            description: "Identifier of the ad detail record the statistics belong to."
+            data_tests:
+              - not_null
+          - name: ad_currency_code
+            data_type: string
+            description: "Currency code of the spend amount."
+          - name: ad_country
+            data_type: string
+            description: "Country the statistics apply to."
+          - name: ad_spend
+            data_type: double
+            description: "Amount spent on that date, in ad_currency_code."
+          - name: ad_impressions
+            data_type: bigint
+            description: "Number of impressions."
+          - name: ad_clicks
+            data_type: string
+            description: "Number of clicks. Stored as string in bronze; cast to a number in staging."
+          - name: ad_date
+            data_type: date
+            description: "Date the statistics apply to."
+          - name: data_src
+            data_type: string
+            description: "Source system the row was loaded from."
